@@ -1,132 +1,101 @@
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+/**
+ * Client-only data layer: fetches from Lichess directly, stores in
+ * IndexedDB, and runs Stockfish in a Web Worker — no backend server.
+ * Keeps the same shape as the old HTTP-backed api.ts so components don't
+ * need to change.
+ */
+import * as db from "./lib/db";
+import { analyzeMovesSan } from "./lib/analysis";
+import { analysisToMoveEvals, fetchGames } from "./lib/lichess";
+import * as statsLib from "./lib/stats";
+import type { Game, MoveEval, Perf } from "./lib/types";
 
-export type Perf = "bullet" | "blitz";
+export type { Perf, MoveEval } from "./lib/types";
+export type { RatingPoint, OpeningStat, TimeUsage, BlunderGame, BlunderStats, PositionHighlight } from "./lib/stats";
 
-export interface GameSummary {
-  id: string;
-  perf: string;
-  created_at: number;
-  color: "white" | "black";
-  result: "win" | "loss" | "draw" | "other";
-  user_rating: number | null;
-  user_rating_diff: number | null;
-  opponent: string;
-  opponent_rating: number | null;
-  opening_name: string | null;
-  opening_eco: string | null;
-  status: string;
-  lichess_analyzed: number;
-  local_analyzed: number;
-}
-
-export interface MoveEval {
-  game_id: string;
-  ply: number;
-  mover: "white" | "black";
-  move_san: string;
-  cp: number | null;
-  mate: number | null;
-  best_move: string | null;
-  classification: string | null;
-  clock_seconds: number | null;
-}
-
-export interface GameDetail extends GameSummary {
-  moves: string;
-  clocks: string | null;
-  clock_initial: number | null;
-  clock_increment: number | null;
-  pgn: string | null;
+export type GameSummary = Game;
+export interface GameDetail extends Game {
   moveEvals: MoveEval[];
 }
 
-export interface RatingPoint {
-  createdAt: number;
-  rating: number;
-  result: string;
-}
-
-export interface OpeningStat {
-  name: string;
-  eco: string | null;
-  games: number;
-  wins: number;
-  draws: number;
-  losses: number;
-  winRate: number;
-}
-
-export interface TimeUsage {
-  curve: { moveNumber: number; avgSeconds: number }[];
-  timePressureRate: number;
-  flagLosses: number;
-  gamesConsidered: number;
-}
-
-export interface BlunderGame {
-  gameId: string;
-  createdAt: number;
-  opening: string | null;
-  result: string;
-  blunders: number;
-  mistakes: number;
-  inaccuracies: number;
-  movesAnalyzed: number;
-}
-
-export interface BlunderStats {
-  perGame: BlunderGame[];
-  totals: {
-    blunders: number;
-    mistakes: number;
-    inaccuracies: number;
-    movesAnalyzed: number;
-    blunderRate: number;
-  };
-  worstOpenings: { opening: string; blunders: number }[];
-  gamesAnalyzed: number;
-}
-
-async function getJson<T>(path: string, params: Record<string, string | number | boolean> = {}): Promise<T> {
-  const url = new URL(API_BASE + path);
-  Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v)));
-  const res = await fetch(url.toString());
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`${res.status} ${res.statusText}: ${body}`);
-  }
-  return res.json();
-}
+const STOCKFISH_DEPTH = 14;
 
 export const api = {
-  status: () => getJson<{ defaultUsername: string; stockfishAvailable: boolean }>("/api/status"),
+  status: async () => ({ defaultUsername: "", stockfishAvailable: true }),
 
   sync: async (username: string, opts: { full?: boolean } = {}) => {
-    const url = new URL(API_BASE + "/api/sync");
-    url.searchParams.set("username", username);
-    if (opts.full) url.searchParams.set("full", "true");
-    const res = await fetch(url.toString(), { method: "POST" });
-    if (!res.ok) throw new Error(await res.text());
-    return res.json() as Promise<{ username: string; fetched: number }>;
+    const sinceMs = opts.full ? undefined : (await db.getSyncState(username))?.newestGameCreatedAt;
+    let fetched = 0;
+    let newest = sinceMs ?? 0;
+
+    for await (const game of fetchGames(username, ["bullet", "blitz"], {
+      sinceMs: sinceMs ? sinceMs + 1 : undefined,
+      maxGames: 300,
+    })) {
+      const { rawAnalysis, ...gameRecord } = game;
+      await db.putGame(gameRecord);
+      fetched += 1;
+      newest = Math.max(newest, gameRecord.created_at);
+
+      if (rawAnalysis) {
+        const movesSan = gameRecord.moves ? gameRecord.moves.split(" ") : [];
+        const evals = analysisToMoveEvals(gameRecord.id, movesSan, rawAnalysis) as MoveEval[];
+        await db.saveMoveEvals(gameRecord.id, evals, "lichess_analyzed");
+      }
+    }
+
+    if (fetched && newest) await db.setSyncState(username, newest);
+    return { username, fetched };
   },
 
-  games: (username: string, perf: Perf, limit = 50, offset = 0) =>
-    getJson<{ total: number; games: GameSummary[] }>("/api/games", { username, perf, limit, offset }),
-
-  game: (id: string) => getJson<GameDetail>(`/api/games/${id}`),
-
-  analyzeGame: async (id: string) => {
-    const res = await fetch(`${API_BASE}/api/games/${id}/analyze`, { method: "POST" });
-    if (!res.ok) throw new Error(await res.text());
-    return res.json() as Promise<{ gameId: string; source: string; moveEvals: MoveEval[] }>;
+  games: async (username: string, perf: Perf, limit = 50, offset = 0) => {
+    const all = await db.getGamesForUserPerf(username, perf);
+    return { total: all.length, games: all.slice(offset, offset + limit) };
   },
 
-  ratingHistory: (username: string, perf: Perf) =>
-    getJson<{ data: RatingPoint[] }>("/api/stats/rating-history", { username, perf }),
+  game: async (id: string): Promise<GameDetail> => {
+    const game = await db.getGame(id);
+    if (!game) throw new Error(`Game ${id} not found locally — try syncing again.`);
+    const moveEvals = await db.getMoveEvals(id);
+    return { ...game, moveEvals };
+  },
 
-  openings: (username: string, perf: Perf) => getJson<{ data: OpeningStat[] }>("/api/stats/openings", { username, perf }),
+  analyzeGame: async (id: string, onProgress?: (done: number, total: number) => void) => {
+    const game = await db.getGame(id);
+    if (!game) throw new Error(`Game ${id} not found locally.`);
+    if (game.lichess_analyzed || game.local_analyzed) {
+      return { gameId: id, source: "cached", moveEvals: await db.getMoveEvals(id) };
+    }
+    const movesSan = game.moves ? game.moves.split(" ") : [];
+    const evalsWithoutGameId = await analyzeMovesSan(movesSan, game.clocks, STOCKFISH_DEPTH, onProgress);
+    const evals: MoveEval[] = evalsWithoutGameId.map((e) => ({ ...e, game_id: id }));
+    await db.saveMoveEvals(id, evals, "local_analyzed");
+    return { gameId: id, source: "stockfish", moveEvals: evals };
+  },
 
-  timeUsage: (username: string, perf: Perf) => getJson<TimeUsage>("/api/stats/time-usage", { username, perf }),
+  ratingHistory: async (username: string, perf: Perf) => ({
+    data: statsLib.ratingHistory(await db.getGamesForUserPerf(username, perf)),
+  }),
 
-  blunders: (username: string, perf: Perf) => getJson<BlunderStats>("/api/stats/blunders", { username, perf }),
+  openings: async (username: string, perf: Perf) => ({
+    data: statsLib.openingStats(await db.getGamesForUserPerf(username, perf)),
+  }),
+
+  timeUsage: async (username: string, perf: Perf) =>
+    statsLib.timeUsage(await db.getGamesForUserPerf(username, perf)),
+
+  blunders: async (username: string, perf: Perf) =>
+    statsLib.blunderStats(await db.getGamesForUserPerf(username, perf)),
+
+  /** Actual board positions behind your biggest blunders and your best
+   * swings, instead of a vague phase-of-the-game label. */
+  positionHighlights: async (username: string, perf: Perf, limit = 6) => {
+    const games = (await db.getGamesForUserPerf(username, perf)).filter(
+      (g) => g.lichess_analyzed || g.local_analyzed,
+    );
+    const gamesWithEvals = await Promise.all(
+      games.map(async (game) => ({ game, evals: await db.getMoveEvals(game.id) })),
+    );
+    return statsLib.topPositionHighlights(gamesWithEvals, limit);
+  },
 };

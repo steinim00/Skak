@@ -1,20 +1,30 @@
 import { useEffect, useState } from "react";
-import { api, type BlunderStats as BlunderStatsT, type GameSummary, type OpeningStat, type Perf, type RatingPoint, type TimeUsage } from "./api";
+import {
+  api,
+  type BlunderStats as BlunderStatsT,
+  type GameSummary,
+  type OpeningStat,
+  type Perf,
+  type PositionHighlight,
+  type RatingPoint,
+  type TimeUsage,
+} from "./api";
 import { RatingChart } from "./components/RatingChart";
 import { OpeningStats } from "./components/OpeningStats";
 import { TimeUsageChart } from "./components/TimeUsageChart";
 import { BlunderStats } from "./components/BlunderStats";
+import { PositionGallery } from "./components/PositionGallery";
 import { GameList } from "./components/GameList";
 import { GameDetail } from "./components/GameDetail";
 import { SyncBar } from "./components/SyncBar";
 import { StatTile } from "./components/StatTile";
+import { ThemeToggle } from "./components/ThemeToggle";
 
 export default function App() {
   const [username, setUsername] = useState(() => localStorage.getItem("skak.username") || "");
   const [perf, setPerf] = useState<Perf>("bullet");
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
-  const [stockfishAvailable, setStockfishAvailable] = useState<boolean | null>(null);
 
   const [games, setGames] = useState<GameSummary[]>([]);
   const [total, setTotal] = useState(0);
@@ -22,12 +32,9 @@ export default function App() {
   const [openings, setOpenings] = useState<OpeningStat[]>([]);
   const [timeUsage, setTimeUsage] = useState<TimeUsage | null>(null);
   const [blunders, setBlunders] = useState<BlunderStatsT | null>(null);
+  const [highlights, setHighlights] = useState<{ blunders: PositionHighlight[]; bestMoves: PositionHighlight[] } | null>(null);
   const [selectedGame, setSelectedGame] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    api.status().then((s) => setStockfishAvailable(s.stockfishAvailable)).catch(() => setStockfishAvailable(null));
-  }, []);
 
   useEffect(() => {
     localStorage.setItem("skak.username", username);
@@ -44,6 +51,7 @@ export default function App() {
     api.openings(username, perf).then((r) => setOpenings(r.data)).catch((e) => setError(String(e)));
     api.timeUsage(username, perf).then(setTimeUsage).catch((e) => setError(String(e)));
     api.blunders(username, perf).then(setBlunders).catch((e) => setError(String(e)));
+    api.positionHighlights(username, perf).then(setHighlights).catch((e) => setError(String(e)));
   }
 
   useEffect(() => {
@@ -74,8 +82,13 @@ export default function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>Skak</h1>
-        <p className="subtitle">Lichess bullet &amp; blitz game analyzer</p>
+        <div className="app-header-row">
+          <div>
+            <h1>Skak</h1>
+            <p className="subtitle">Lichess bullet &amp; blitz game analyzer</p>
+          </div>
+          <ThemeToggle />
+        </div>
       </header>
 
       <SyncBar
@@ -86,7 +99,6 @@ export default function App() {
         onSync={handleSync}
         syncing={syncing}
         syncMessage={syncMessage}
-        stockfishAvailable={stockfishAvailable}
       />
 
       {error && <div className="error-banner">{error}</div>}
@@ -120,6 +132,22 @@ export default function App() {
           <section className="card">
             <h2>Blunders &amp; mistakes</h2>
             {blunders && <BlunderStats data={blunders} />}
+            {highlights && (
+              <>
+                <PositionGallery
+                  title="Positions where you blundered"
+                  subtitle="Your biggest single drops in evaluation — the actual position, not just a phase label."
+                  highlights={highlights.blunders}
+                  onSelect={setSelectedGame}
+                />
+                <PositionGallery
+                  title="Positions you handled well"
+                  subtitle="Moves that swung the position most in your favor."
+                  highlights={highlights.bestMoves}
+                  onSelect={setSelectedGame}
+                />
+              </>
+            )}
           </section>
 
           <section className="card">

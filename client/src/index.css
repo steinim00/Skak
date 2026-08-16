@@ -8,6 +8,14 @@
   margin-bottom: 20px;
 }
 
+.app-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .app-header h1 {
   font-size: 28px;
   margin: 0;
@@ -18,6 +26,10 @@
   color: var(--text-secondary);
   margin: 4px 0 0;
   font-size: 14px;
+}
+
+.theme-toggle {
+  white-space: nowrap;
 }
 
 .card {
@@ -328,4 +340,62 @@
 
 .move-chip {
   color: var(--text-primary);
+}
+
+.mini-board {
+  display: block;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.position-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.position-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: center;
+}
+
+.position-card:hover {
+  border-color: var(--series-1);
+}
+
+.position-card-label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.position-card-move {
+  color: var(--text-primary);
+}
+
+.position-card-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.swing-bad {
+  color: var(--status-critical);
+}
+
+.swing-good {
+  color: var(--status-good);
 }

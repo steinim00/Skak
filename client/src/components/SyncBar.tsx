@@ -9,10 +9,9 @@ interface Props {
   onSync: (full: boolean) => void;
   syncing: boolean;
   syncMessage: string | null;
-  stockfishAvailable: boolean | null;
 }
 
-export function SyncBar({ username, onUsernameChange, perf, onPerfChange, onSync, syncing, syncMessage, stockfishAvailable }: Props) {
+export function SyncBar({ username, onUsernameChange, perf, onPerfChange, onSync, syncing, syncMessage }: Props) {
   const [draft, setDraft] = useState(username);
 
   return (
@@ -43,12 +42,6 @@ export function SyncBar({ username, onUsernameChange, perf, onPerfChange, onSync
         </div>
       </div>
       {syncMessage && <div className="sync-message">{syncMessage}</div>}
-      {stockfishAvailable === false && (
-        <div className="warning-banner">
-          Stockfish isn't installed on the server — on-demand analysis of games without existing Lichess analysis
-          won't work until you install it (e.g. <code>apt-get install stockfish</code>).
-        </div>
-      )}
     </div>
   );
 }

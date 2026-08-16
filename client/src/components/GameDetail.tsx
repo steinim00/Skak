@@ -45,6 +45,7 @@ export function GameDetail({ gameId, onClose }: { gameId: string; onClose: () =>
   const [game, setGame] = useState<GameDetailT | null>(null);
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -58,15 +59,17 @@ export function GameDetail({ gameId, onClose }: { gameId: string; onClose: () =>
 
   async function handleAnalyze() {
     setAnalyzing(true);
+    setProgress(null);
     setError(null);
     try {
-      await api.analyzeGame(gameId);
+      await api.analyzeGame(gameId, (done, total) => setProgress({ done, total }));
       const fresh = await api.game(gameId);
       setGame(fresh);
     } catch (e) {
       setError(String(e));
     } finally {
       setAnalyzing(false);
+      setProgress(null);
     }
   }
 
@@ -95,7 +98,11 @@ export function GameDetail({ gameId, onClose }: { gameId: string; onClose: () =>
 
             {!isAnalyzed && (
               <button className="btn" onClick={handleAnalyze} disabled={analyzing}>
-                {analyzing ? "Analyzing with Stockfish…" : "Analyze this game"}
+                {analyzing
+                  ? progress
+                    ? `Analyzing… (${progress.done}/${progress.total} moves)`
+                    : "Starting Stockfish…"
+                  : "Analyze this game"}
               </button>
             )}
 
